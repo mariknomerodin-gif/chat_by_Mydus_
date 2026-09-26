@@ -1,0 +1,197 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Чат</title>
+  <style>
+    body { margin: 0; padding: 0; font-family: sans-serif; background: #f5f5f5; height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
+    #login { display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100%; background: #fff; }
+    .row { display: flex; gap: 8px; margin-bottom: 8px; width: 90%; max-width: 400px; }
+    input { padding: 12px; border: 1px solid #ccc; border-radius: 6px; flex: 1; font-size: 15px; }
+    button { padding: 12px 24px; background: #007bff; color: white; border: none; border-radius: 6px; cursor: pointer; font-size: 15px; white-space: nowrap; }
+    button:hover { background: #0056b3; }
+
+    #chat { display: none; flex-direction: column; height: 100%; }
+    #status { padding: 8px 12px; background: #eef; border-bottom: 1px solid #ddd; font-size: 13px; color: #444; flex-shrink: 0; }
+    #messages { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; padding: 12px; }
+    .msg { padding: 10px 14px; border-radius: 10px; max-width: 75%; word-wrap: break-word; font-size: 14px; line-height: 1.4; }
+    .mine { align-self: flex-end; background: #007bff; color: white; }
+    .other { align-self: flex-start; background: #e9ecef; color: #222; }
+    .call { align-self: center; background: #fff3cd; color: #664d03; border: 1px solid #ffe69c; text-align: center; font-size: 13px; }
+    .msg audio { margin-top: 6px; max-width: 100%; }
+
+    #controls { display: flex; gap: 8px; padding: 10px; align-items: center; background: #fff; border-top: 1px solid #ddd; flex-shrink: 0; }
+    #msg-input { flex: 1; padding: 12px; border: 1px solid #ccc; border-radius: 24px; outline: none; font-size: 15px; }
+    #call-btn, #record-btn { padding: 10px 14px; font-size: 16px; background: #28a745; border-radius: 24px; }
+    #record-btn { background: #dc3545; }
+    #record-btn.recording { background: #ffc107; color: #222; }
+  </style>
+</head>
+<body>
+
+  <div id="login">
+    <div class="row"><input id="name" placeholder="Имя" /></div>
+    <div class="row"><input id="room" placeholder="Комната (без пробелов)" /></div>
+    <button id="start">Войти</button>
+  </div>
+
+  <div id="chat">
+    <div id="status">Ожидание...</div>
+    <div id="messages"></div>
+    <div id="controls">
+      <button id="call-btn" title="Позвонить">📞</button>
+      <button id="record-btn" title="Голосовое">🎤</button>
+      <input id="msg-input" placeholder="Сообщение..." />
+      <button id="send">➤</button>
+    </div>
+  </div>
+
+  <script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
+  <script>
+    const login = document.getElementById('login');
+    const chat = document.getElementById('chat');
+    const nameInp = document.getElementById('name');
+    const roomInp = document.getElementById('room');
+    const startBtn = document.getElementById('start');
+    const msgInp = document.getElementById('msg-input');
+    const sendBtn = document.getElementById('send');
+    const callBtn = document.getElementById('call-btn');
+    const recordBtn = document.getElementById('record-btn');
+    const msgs = document.getElementById('messages');
+    const status = document.getElementById('status');
+
+    let client, topic, userName;
+    const seen = new Set();
+
+    startBtn.onclick = () => {
+      userName = nameInp.value.trim() || 'Гость';
+      const room = roomInp.value.trim();
+      if (!room) return alert('Введи комнату');
+      topic = 'chat/' + room;
+
+      login.style.display = 'none';
+      chat.style.display = 'flex';
+      status.textContent = 'Подключаюсь...';
+
+      client = mqtt.connect('wss://broker.emqx.io:8084/mqtt');
+
+      client.on('connect', () => {
+        status.textContent = '✅ Подключено: ' + room;
+        client.subscribe(topic);
+      });
+
+      client.on('message', (t, payload) => {
+        let d;
+        try { d = JSON.parse(payload.toString()); } catch (e) { return; }
+        if (d.id && seen.has(d.id)) return;
+        if (d.id) seen.add(d.id);
+        if (d.user === userName) return;
+
+        if (d.type === 'call') { addCall(d.user); beep(); }
+        else if (d.type === 'voice') { addVoice(d.user, d.audio, false); beep(); }
+        else { addMessage(d.user, d.text, false); }
+      });
+    };
+
+    sendBtn.onclick = sendMsg;
+    msgInp.onkeydown = e => { if (e.key === 'Enter') sendMsg(); };
+
+    function newId() { return Date.now().toString(36) + Math.random().toString(36).slice(2,7); }
+
+    function addMessage(name, text, isMine) {
+      const div = document.createElement('div');
+      div.className = 'msg ' + (isMine ? 'mine' : 'other');
+      div.innerHTML = isMine ? text : '<b>' + name + '</b><br>' + text;
+      msgs.appendChild(div);
+      msgs.scrollTop = msgs.scrollHeight;
+    }
+
+    function addVoice(name, dataUrl, isMine) {
+      const div = document.createElement('div');
+      div.className = 'msg ' + (isMine ? 'mine' : 'other');
+      if (!isMine) div.innerHTML = '<b>' + name + '</b><br>';
+      const audio = document.createElement('audio');
+      audio.controls = true;
+      audio.src = dataUrl;
+      div.appendChild(audio);
+      msgs.appendChild(div);
+      msgs.scrollTop = msgs.scrollHeight;
+    }
+
+    function addCall(name) {
+      const div = document.createElement('div');
+      div.className = 'msg call';
+      div.textContent = '📞 ' + name + ' зовёт на звонок!';
+      msgs.appendChild(div);
+      msgs.scrollTop = msgs.scrollHeight;
+    }
+
+    function beep() {
+      try {
+        const ctx = new (window.AudioContext || window.webkitAudioContext)();
+        const o = ctx.createOscillator(); const g = ctx.createGain();
+        o.connect(g); g.connect(ctx.destination);
+        o.frequency.value = 880; g.gain.value = 0.1;
+        o.start(); o.stop(ctx.currentTime + 0.3);
+      } catch (e) {}
+    }
+
+    function sendMsg() {
+      const txt = msgInp.value.trim();
+      if (!txt || !client || !client.connected) return;
+      client.publish(topic, JSON.stringify({ id: newId(), user: userName, text: txt }));
+      addMessage(userName, txt, true);
+      msgInp.value = ''; msgInp.focus();
+    }
+
+    callBtn.onclick = () => {
+      if (!client || !client.connected) return alert('Нет соединения');
+      client.publish(topic, JSON.stringify({ id: newId(), type: 'call', user: userName }));
+      addCall('Вы');
+    };
+
+    // ==== ГОЛОСОВЫЕ ====
+    let mediaRecorder = null, chunks = [], recording = false, timer = null;
+
+    recordBtn.onclick = () => { recording ? stopRec() : startRec(); };
+
+    async function startRec() {
+      if (!client || !client.connected) return alert('Дождись «Подключено»');
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        chunks = [];
+        mediaRecorder = new MediaRecorder(stream);
+        mediaRecorder.ondataavailable = e => { if (e.data.size > 0) chunks.push(e.data); };
+        mediaRecorder.onstop = () => {
+          stream.getTracks().forEach(t => t.stop());
+          const blob = new Blob(chunks, { type: mediaRecorder.mimeType || 'audio/webm' });
+          const reader = new FileReader();
+          reader.onloadend = () => {
+            const dataUrl = reader.result;
+            if (dataUrl.length > 900000) return alert('Слишком длинное, запиши короче');
+            client.publish(topic, JSON.stringify({ id: newId(), type: 'voice', user: userName, audio: dataUrl }));
+            addVoice(userName, dataUrl, true);
+          };
+          reader.readAsDataURL(blob);
+        };
+        mediaRecorder.start();
+        recording = true;
+        recordBtn.classList.add('recording');
+        recordBtn.textContent = '⏹';
+        timer = setTimeout(() => { if (recording) stopRec(); }, 15000);
+      } catch (e) {
+        alert('Микрофон недоступен. Нужна HTTPS-ссылка (Netlify), а не файл с диска.');
+      }
+    }
+
+    function stopRec() {
+      if (mediaRecorder && mediaRecorder.state !== 'inactive') mediaRecorder.stop();
+      recording = false;
+      clearTimeout(timer);
+      recordBtn.classList.remove('recording');
+      recordBtn.textContent = '🎤';
+    }
+  </script>
+</body>
+</html>
