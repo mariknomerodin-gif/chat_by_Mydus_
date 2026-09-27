@@ -2,37 +2,31 @@
 <html lang="ru">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Чат</title>
+  <title>Стабильный чат (MQTT)</title>
   <style>
-    body { margin: 0; padding: 0; font-family: sans-serif; background: #f5f5f5; height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
-    #login { display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100%; background: #fff; }
-    .row { display: flex; gap: 8px; margin-bottom: 8px; width: 90%; max-width: 400px; }
-    input { padding: 12px; border: 1px solid #ccc; border-radius: 6px; flex: 1; font-size: 15px; }
-    button { padding: 12px 24px; background: #007bff; color: white; border: none; border-radius: 6px; cursor: pointer; font-size: 15px; white-space: nowrap; }
-    button:hover { background: #0056b3; }
-
-    #chat { display: none; flex-direction: column; height: 100%; }
-    #status { padding: 8px 12px; background: #eef; border-bottom: 1px solid #ddd; font-size: 13px; color: #444; flex-shrink: 0; }
-    #messages { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; padding: 12px; }
-    .msg { padding: 10px 14px; border-radius: 10px; max-width: 75%; word-wrap: break-word; font-size: 14px; line-height: 1.4; }
-    .mine { align-self: flex-end; background: #007bff; color: white; }
-    .other { align-self: flex-start; background: #e9ecef; color: #222; }
-    .call { align-self: center; background: #fff3cd; color: #664d03; border: 1px solid #ffe69c; text-align: center; font-size: 13px; }
-    .msg audio { margin-top: 6px; max-width: 100%; }
-
-    #controls { display: flex; gap: 8px; padding: 10px; align-items: center; background: #fff; border-top: 1px solid #ddd; flex-shrink: 0; }
-    #msg-input { flex: 1; padding: 12px; border: 1px solid #ccc; border-radius: 24px; outline: none; font-size: 15px; }
-    #call-btn, #record-btn { padding: 10px 14px; font-size: 16px; background: #28a745; border-radius: 24px; }
-    #record-btn { background: #dc3545; }
-    #record-btn.recording { background: #ffc107; color: #222; }
+    body { margin:0; font-family:sans-serif; background:#f5f5f5; height:100vh; display:flex; flex-direction:column; overflow:hidden; }
+    #login { display:flex; flex-direction:column; align-items:center; justify-content:center; height:100%; background:#fff; padding:20px; text-align:center; }
+    input { padding:14px; border:1px solid #ccc; border-radius:8px; width:100%; max-width:360px; margin-bottom:12px; box-sizing:border-box; }
+    button { padding:16px 24px; background:#007bff; color:#fff; border:none; border-radius:8px; cursor:pointer; font-size:16px; }
+    
+    #chat { display:none; flex-direction:column; height:100%; }
+    #status { padding:10px 15px; background:#eef; border-bottom:1px solid #ddd; font-size:14px; color:#444; }
+    #messages { flex:1; overflow-y:auto; display:flex; flex-direction:column; gap:12px; padding:15px; }
+    .msg { padding:12px 16px; border-radius:12px; max-width:80%; word-wrap:break-word; }
+    .mine { align-self:flex-end; background:#007bff; color:#fff; }
+    .other { align-self:flex-start; background:#e9ecef; color:#222; }
+    
+    #controls { display:flex; gap:12px; padding:12px; background:#fff; border-top:1px solid #ddd; align-items:center; justify-content:center; }
+    #msg-input { flex:1; padding:12px; border:1px solid #ccc; border-radius:24px; outline:none; box-sizing:border-box; }
+    #record-btn { width:64px; height:64px; border-radius:50%; background:#dc3545; color:white; border:none; cursor:pointer; font-size:24px; display:flex; align-items:center; justify-content:center; box-shadow:0 4px 6px rgba(0,0,0,0.2); }
+    #record-btn.recording { background:#ffc107; color:#222; transform:scale(1.1); }
   </style>
 </head>
 <body>
-
   <div id="login">
-    <div class="row"><input id="name" placeholder="Имя" /></div>
-    <div class="row"><input id="room" placeholder="Комната (без пробелов)" /></div>
+    <h2>Вход в чат</h2>
+    <input id="name" placeholder="Твое имя" />
+    <input id="room" placeholder="Название комнаты" />
     <button id="start">Войти</button>
   </div>
 
@@ -40,14 +34,13 @@
     <div id="status">Ожидание...</div>
     <div id="messages"></div>
     <div id="controls">
-      <button id="call-btn" title="Позвонить">📞</button>
-      <button id="record-btn" title="Голосовое">🎤</button>
-      <input id="msg-input" placeholder="Сообщение..." />
+      <button id="record-btn" title="Голос (макс 4 сек)">🎤</button>
+      <input id="msg-input" placeholder="Текст..." />
       <button id="send">➤</button>
     </div>
   </div>
 
-  <script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/mqtt/dist/mqtt.min.js"></script>
   <script>
     const login = document.getElementById('login');
     const chat = document.getElementById('chat');
@@ -56,53 +49,66 @@
     const startBtn = document.getElementById('start');
     const msgInp = document.getElementById('msg-input');
     const sendBtn = document.getElementById('send');
-    const callBtn = document.getElementById('call-btn');
     const recordBtn = document.getElementById('record-btn');
     const msgs = document.getElementById('messages');
     const status = document.getElementById('status');
 
     let client, topic, userName;
+    const myId = Math.random().toString(36).slice(2, 10);
     const seen = new Set();
 
     startBtn.onclick = () => {
       userName = nameInp.value.trim() || 'Гость';
       const room = roomInp.value.trim();
-      if (!room) return alert('Введи комнату');
+      if (!room) return alert('Введи название комнаты');
       topic = 'chat/' + room;
 
       login.style.display = 'none';
       chat.style.display = 'flex';
       status.textContent = 'Подключаюсь...';
 
-      client = mqtt.connect('wss://broker.emqx.io:8084/mqtt');
+      client = mqtt.connect('wss://broker.emqx.io:8084/mqtt', {
+        clientId: 'web_' + myId + '_' + Date.now(),
+        clean: true, connectTimeout: 8000, reconnectPeriod: 2000
+      });
 
       client.on('connect', () => {
         status.textContent = '✅ Подключено: ' + room;
-        client.subscribe(topic);
+        client.subscribe(topic, { qos: 0 });
       });
+      client.on('close', () => status.textContent = '⚠️ Соединение закрыто');
+      client.on('error', (e) => status.textContent = '⚠️ Ошибка: ' + e.message);
 
       client.on('message', (t, payload) => {
         let d;
         try { d = JSON.parse(payload.toString()); } catch (e) { return; }
+        if (d.senderId === myId) return;
         if (d.id && seen.has(d.id)) return;
         if (d.id) seen.add(d.id);
-        if (d.user === userName) return;
-
-        if (d.type === 'call') { addCall(d.user); beep(); }
-        else if (d.type === 'voice') { addVoice(d.user, d.audio, false); beep(); }
-        else { addMessage(d.user, d.text, false); }
+        if (d.type === 'voice') addVoice(d.user, d.audio, false);
+        else addMessage(d.user, d.text, false);
       });
     };
 
     sendBtn.onclick = sendMsg;
     msgInp.onkeydown = e => { if (e.key === 'Enter') sendMsg(); };
 
-    function newId() { return Date.now().toString(36) + Math.random().toString(36).slice(2,7); }
+    function sendMsg() {
+      const txt = msgInp.value.trim();
+      if (!txt || !client || !client.connected) return;
+      client.publish(topic, JSON.stringify({
+        id: Date.now().toString(36) + myId,
+        senderId: myId, user: userName, text: txt
+      }));
+      addMessage(userName, txt, true);
+      msgInp.value = ''; msgInp.focus();
+    }
 
     function addMessage(name, text, isMine) {
       const div = document.createElement('div');
       div.className = 'msg ' + (isMine ? 'mine' : 'other');
-      div.innerHTML = isMine ? text : '<b>' + name + '</b><br>' + text;
+      if (isMine) div.textContent = text;
+      else div.innerHTML = '<b>' + name + '</b><br>' + text;
       msgs.appendChild(div);
       msgs.scrollTop = msgs.scrollHeight;
     }
@@ -119,69 +125,60 @@
       msgs.scrollTop = msgs.scrollHeight;
     }
 
-    function addCall(name) {
-      const div = document.createElement('div');
-      div.className = 'msg call';
-      div.textContent = '📞 ' + name + ' зовёт на звонок!';
-      msgs.appendChild(div);
-      msgs.scrollTop = msgs.scrollHeight;
-    }
-
-    function beep() {
-      try {
-        const ctx = new (window.AudioContext || window.webkitAudioContext)();
-        const o = ctx.createOscillator(); const g = ctx.createGain();
-        o.connect(g); g.connect(ctx.destination);
-        o.frequency.value = 880; g.gain.value = 0.1;
-        o.start(); o.stop(ctx.currentTime + 0.3);
-      } catch (e) {}
-    }
-
-    function sendMsg() {
-      const txt = msgInp.value.trim();
-      if (!txt || !client || !client.connected) return;
-      client.publish(topic, JSON.stringify({ id: newId(), user: userName, text: txt }));
-      addMessage(userName, txt, true);
-      msgInp.value = ''; msgInp.focus();
-    }
-
-    callBtn.onclick = () => {
-      if (!client || !client.connected) return alert('Нет соединения');
-      client.publish(topic, JSON.stringify({ id: newId(), type: 'call', user: userName }));
-      addCall('Вы');
-    };
-
-    // ==== ГОЛОСОВЫЕ ====
+    // ЗАПИСЬ: жёсткий лимит 4 секунды и проверка размера
     let mediaRecorder = null, chunks = [], recording = false, timer = null;
 
-    recordBtn.onclick = () => { recording ? stopRec() : startRec(); };
+    recordBtn.onclick = () => recording ? stopRec() : startRec();
 
     async function startRec() {
-      if (!client || !client.connected) return alert('Дождись «Подключено»');
+      if (!client || !client.connected) return alert('Дождись статуса «Подключено»');
       try {
         const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
         chunks = [];
-        mediaRecorder = new MediaRecorder(stream);
+        const mimeList = ['audio/webm;codecs=opus', 'audio/mp4', 'audio/ogg;codecs=opus'];
+        let mime = '';
+        for (const m of mimeList) if (MediaRecorder.isTypeSupported(m)) { mime = m; break; }
+
+        mediaRecorder = mime
+          ? new MediaRecorder(stream, { mimeType: mime, audioBitsPerSecond: 16000 })
+          : new MediaRecorder(stream, { audioBitsPerSecond: 16000 });
+
         mediaRecorder.ondataavailable = e => { if (e.data.size > 0) chunks.push(e.data); };
+
         mediaRecorder.onstop = () => {
           stream.getTracks().forEach(t => t.stop());
           const blob = new Blob(chunks, { type: mediaRecorder.mimeType || 'audio/webm' });
+          if (blob.size === 0) { status.textContent = '⚠️ Пустая запись'; return; }
+
           const reader = new FileReader();
           reader.onloadend = () => {
             const dataUrl = reader.result;
-            if (dataUrl.length > 900000) return alert('Слишком длинное, запиши короче');
-            client.publish(topic, JSON.stringify({ id: newId(), type: 'voice', user: userName, audio: dataUrl }));
+            // Лимит: не больше 180 КБ. Это примерно 4–5 секунд — точно пролезет.
+            if (dataUrl.length > 180000) {
+              status.textContent = '⚠️ Слишком длинное (лимит 4 сек). Запиши короче.';
+              return;
+            }
             addVoice(userName, dataUrl, true);
+            status.textContent = '🎙️ Отправляю...';
+            client.publish(topic, JSON.stringify({
+              id: Date.now().toString(36) + myId,
+              senderId: myId, type: 'voice', user: userName, audio: dataUrl
+            }), (err) => {
+              status.textContent = err ? '❌ Не ушло: ' + err.message : '✅ Голосовое отправлено';
+            });
           };
           reader.readAsDataURL(blob);
         };
+
         mediaRecorder.start();
         recording = true;
         recordBtn.classList.add('recording');
         recordBtn.textContent = '⏹';
-        timer = setTimeout(() => { if (recording) stopRec(); }, 15000);
+        // Автостоп через 4 секунды
+        timer = setTimeout(() => { if (recording) stopRec(); }, 4000);
       } catch (e) {
-        alert('Микрофон недоступен. Нужна HTTPS-ссылка (Netlify), а не файл с диска.');
+        status.textContent = '⚠️ Микрофон не включился: ' + e.message;
+        alert('Ошибка микрофона: ' + e.message);
       }
     }
 
